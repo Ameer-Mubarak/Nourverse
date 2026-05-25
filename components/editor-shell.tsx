@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import WaveSurfer from 'wavesurfer.js';
 import { motion } from 'framer-motion';
 import { toast } from 'sonner';
-import { Download, Upload, Play, Save, FolderOpen, ListVideo, FileJson, GripVertical } from 'lucide-react';
+import { Download, Upload, Play, Save, FolderOpen, ListVideo, FileJson, GripVertical, Pause } from 'lucide-react';
 import { fetchAyahs, fetchTranslation, RECITERS } from '@/lib/quran-api';
 import { listDriveFiles, uploadToDriveResumable } from '@/lib/google-drive';
 import { renderMp4 } from '@/lib/render';
@@ -16,7 +16,10 @@ export function EditorShell() {
   const [progress, setProgress] = useState(0);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [files, setFiles] = useState<any[]>([]);
+  const [playhead, setPlayhead] = useState(0);
+  const [isPlaying, setIsPlaying] = useState(false);
   const waveRef = useRef<HTMLDivElement>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => { loadSaved(); loadDrafts(); }, [loadSaved, loadDrafts]);
   useEffect(() => { autoSave(); }, [project, autoSave]);
@@ -27,11 +30,43 @@ export function EditorShell() {
     return () => ws.destroy();
   }, [project.ayahs]);
 
-  const subtitleClass = useMemo(() => project.subtitlePreset === 'glow' ? 'text-white drop-shadow-[0_0_12px_#22D3EE]' : project.subtitlePreset === 'karaoke' ? 'text-primary animate-pulse' : 'text-white', [project.subtitlePreset]);
+  useEffect(() => {
+    if (!project.ayahs[0]?.audio) return;
+    const audio = new Audio(project.ayahs[0].audio);
+    audioRef.current = audio;
+    const update = () => setPlayhead(audio.currentTime);
+    const onEnd = () => setIsPlaying(false);
+    audio.addEventListener('timeupdate', update);
+    audio.addEventListener('ended', onEnd);
 
-  const timeline = project.timeline.length ? project.timeline : project.ayahs.map((a, idx) => ({ id: `${a.number}-${idx}`, ayahNumber: a.numberInSurah, start: idx * 5, end: (idx + 1) * 5, layer: 0 }));
-  useEffect(() => { if (!project.timeline.length && project.ayahs.length) patchProject({ timeline }); }, [project.ayahs.length]);
+    return () => {
+      audio.pause();
+      audio.removeEventListener('timeupdate', update);
+      audio.removeEventListener('ended', onEnd);
+      audioRef.current = null;
+      setIsPlaying(false);
+      setPlayhead(0);
+    };
+  }, [project.ayahs]);
 
+  const timeline = project.timeline.length
+    ? project.timeline
+    : project.ayahs.map((a, idx) => ({ id: `${a.number}-${idx}`, ayahNumber: a.numberInSurah, start: idx * 5, end: (idx + 1) * 5, layer: 0 }));
+
+  useEffect(() => {
+    if (!project.timeline.length && project.ayahs.length) patchProject({ timeline });
+  }, [project.ayahs.length]);
+
+  const subtitleClass = useMemo(() => {
+    if (project.subtitlePreset === 'glow') return 'text-white drop-shadow-[0_0_12px_#22D3EE]';
+    if (project.subtitlePreset === 'karaoke') return 'text-slate-100';
+    return 'text-white';
+  }, [project.subtitlePreset]);
+
+  const activeWordIndex = useMemo(() => {
+    if (!project.subtitleWords.length) return -1;
+    return project.subtitleWords.findIndex((word) => playhead >= word.start && playhead <= word.end);
+  }, [project.subtitleWords, playhead]);
 
   const loadQuran = async () => {
     try {
@@ -41,9 +76,32 @@ export function EditorShell() {
       }
       const ayahs = await fetchAyahs(project.surah, project.ayahFrom, project.ayahTo, project.reciter);
       const translation = await fetchTranslation(project.surah, project.ayahFrom, project.ayahTo);
-      patchProject({ ayahs, translation, trimEnd: Math.max(20, ayahs.length * 5) });
+      const duration = Math.max(20, ayahs.length * 5);
+      const allWords = ayahs.flatMap((a) => a.text.split(/\s+/).filter(Boolean));
+      const step = allWords.length ? duration / allWords.length : 0;
+      const subtitleWords = allWords.map((text, i) => ({ text, start: i * step, end: (i + 1) * step }));
+
+      patchProject({ ayahs, translation, subtitleWords, trimEnd: duration });
       toast.success('تم جلب التلاوة والآيات بنجاح');
     } catch (e) { toast.error(e instanceof Error ? e.message : 'تعذر جلب بيانات القرآن'); }
+  };
+
+  const toggleAudio = async () => {
+    if (!audioRef.current) return;
+    if (isPlaying) {
+      audioRef.current.pause();
+      setIsPlaying(false);
+      return;
+    }
+    audioRef.current.currentTime = playhead;
+    await audioRef.current.play();
+    setIsPlaying(true);
+  };
+
+  const updateClip = (id: string, field: 'start' | 'end' | 'layer', value: number) => {
+    const updated = timeline.map((clip) => clip.id === id ? { ...clip, [field]: value } : clip)
+      .map((clip) => clip.end <= clip.start ? { ...clip, end: clip.start + 0.5 } : clip);
+    patchProject({ timeline: updated });
   };
 
   const onRender = async () => {
@@ -99,7 +157,25 @@ export function EditorShell() {
     </section>
 
     <section className='glass rounded-2xl p-4 space-y-2'>
-      <div className={subtitleClass + ' text-2xl leading-loose'}>{project.ayahs.map(a => a.text).join(' ۝ ') || 'النص العربي سيظهر هنا'}</div>
+      <div className='flex items-center justify-between gap-3'>
+        <button onClick={toggleAudio} className='px-3 py-2 bg-white/10 rounded-lg flex items-center gap-2'>{isPlaying ? <Pause size={15} /> : <Play size={15} />} معاينة التلاوة</button>
+        <input type='range' min={0} max={Math.max(project.trimEnd, 1)} step={0.1} value={playhead} onChange={(e) => {
+          const t = Number(e.target.value);
+          setPlayhead(t);
+          if (audioRef.current) audioRef.current.currentTime = t;
+        }} className='w-full' />
+      </div>
+
+      {project.subtitlePreset === 'karaoke' ? (
+        <div className='text-2xl leading-loose'>
+          {project.subtitleWords.length ? project.subtitleWords.map((word, idx) => (
+            <span key={`${word.text}-${idx}`} className={idx === activeWordIndex ? 'text-primary drop-shadow-[0_0_12px_#22D3EE] transition-all' : 'text-slate-300'}>{word.text} </span>
+          )) : 'النص العربي سيظهر هنا'}
+        </div>
+      ) : (
+        <div className={subtitleClass + ' text-2xl leading-loose'}>{project.ayahs.map(a => a.text).join(' ۝ ') || 'النص العربي سيظهر هنا'}</div>
+      )}
+
       <p className='text-muted'>{project.translation || 'الترجمة الإنجليزية ستظهر هنا'}</p>
       <div ref={waveRef} className='w-full' />
     </section>
@@ -108,13 +184,26 @@ export function EditorShell() {
       <h2 className='mb-3 text-lg'>الخط الزمني</h2>
       <input type='range' min={0} max={120} value={project.trimStart} onChange={(e) => patchProject({ trimStart: Number(e.target.value) })} className='w-full' />
       <input type='range' min={1} max={180} value={project.trimEnd} onChange={(e) => patchProject({ trimEnd: Number(e.target.value) })} className='w-full' />
-      <div className='text-sm text-muted'>البداية: {project.trimStart}s | النهاية: {project.trimEnd}s</div>
+      <div className='text-sm text-muted'>البداية: {project.trimStart}s | النهاية: {project.trimEnd}s | الرأس: {playhead.toFixed(1)}s</div>
       <div className='space-y-2 mt-3'>
-        {timeline.map((clip, i) => <div key={clip.id} className='bg-slate-900 rounded p-2 flex items-center justify-between'>
-          <div className='flex items-center gap-2 text-sm'><GripVertical size={14}/> آية {clip.ayahNumber} ({clip.start}s → {clip.end}s)</div>
-          <div className='flex gap-2'>
-            <button onClick={() => { if(i===0) return; const t=[...timeline]; [t[i-1],t[i]]=[t[i],t[i-1]]; patchProject({timeline:t}); }} className='text-xs px-2 py-1 bg-white/10 rounded'>↑</button>
-            <button onClick={() => { if(i===timeline.length-1) return; const t=[...timeline]; [t[i+1],t[i]]=[t[i],t[i+1]]; patchProject({timeline:t}); }} className='text-xs px-2 py-1 bg-white/10 rounded'>↓</button>
+        {timeline.map((clip, i) => <div key={clip.id} className='bg-slate-900 rounded p-2 space-y-2'>
+          <div className='flex items-center justify-between'>
+            <div className='flex items-center gap-2 text-sm'><GripVertical size={14}/> آية {clip.ayahNumber} ({clip.start.toFixed(1)}s → {clip.end.toFixed(1)}s)</div>
+            <div className='flex gap-2'>
+              <button onClick={() => { if (i === 0) return; const t = [...timeline]; [t[i - 1], t[i]] = [t[i], t[i - 1]]; patchProject({ timeline: t }); }} className='text-xs px-2 py-1 bg-white/10 rounded'>↑</button>
+              <button onClick={() => { if (i === timeline.length - 1) return; const t = [...timeline]; [t[i + 1], t[i]] = [t[i], t[i + 1]]; patchProject({ timeline: t }); }} className='text-xs px-2 py-1 bg-white/10 rounded'>↓</button>
+            </div>
+          </div>
+          <div className='grid md:grid-cols-3 gap-2'>
+            <label className='text-xs'>البداية
+              <input type='range' min={0} max={180} step={0.1} value={clip.start} onChange={(e) => updateClip(clip.id, 'start', Number(e.target.value))} className='w-full' />
+            </label>
+            <label className='text-xs'>النهاية
+              <input type='range' min={0.5} max={180} step={0.1} value={clip.end} onChange={(e) => updateClip(clip.id, 'end', Number(e.target.value))} className='w-full' />
+            </label>
+            <label className='text-xs'>الطبقة
+              <input type='number' value={clip.layer} onChange={(e) => updateClip(clip.id, 'layer', Number(e.target.value) || 0)} className='w-full bg-slate-800 rounded p-1 mt-1' />
+            </label>
           </div>
         </div>)}
       </div>
