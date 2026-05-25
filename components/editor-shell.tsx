@@ -1,33 +1,103 @@
 'use client';
-import { useEffect, useRef, useState } from 'react';
-import { useEditorStore } from '@/store/use-editor-store';
-import { fetchAyahs, fetchTranslation } from '@/lib/quran-api';
-import { renderMp4 } from '@/lib/render';
-import { uploadToDrive } from '@/lib/google-drive';
+
+import { useEffect, useMemo, useRef, useState } from 'react';
 import WaveSurfer from 'wavesurfer.js';
+import { motion } from 'framer-motion';
 import { toast } from 'sonner';
-import { Download, Upload, Play } from 'lucide-react';
-export function EditorShell(){
-  const {project,setProject,autoSave}=useEditorStore();
-  const [loading,setLoading]=useState(false); const [videoUrl,setVideoUrl]=useState('');
-  const waveRef=useRef<HTMLDivElement>(null);
-  useEffect(()=>{if(project.ayahs[0]?.audio && waveRef.current){const ws=WaveSurfer.create({container:waveRef.current,waveColor:'#22D3EE',progressColor:'#14B8A6',url:project.ayahs[0].audio});return()=>ws.destroy();}},[project.ayahs]);
-  const load=async()=>{setLoading(true);const ayahs=await fetchAyahs();const tr=await fetchTranslation();setProject({...project,ayahs,translation:tr});setLoading(false);toast.success('تم تحميل الآيات');};
-  const exportVideo=async()=>{setLoading(true);try{const blob=await renderMp4(project);const url=URL.createObjectURL(blob);setVideoUrl(url);autoSave();toast.success('تم إنشاء الفيديو');}catch(e){toast.error('فشل التصدير');}setLoading(false);};
-  const drive=async()=>{if(!videoUrl) return toast.error('قم بالتصدير أولاً'); const blob=await (await fetch(videoUrl)).blob(); const f=await uploadToDrive(blob,`nourverse-${Date.now()}.mp4`); toast.success(`رفع ناجح: ${f.id}`);};
-  return <main className='p-4 md:p-8 space-y-4'>
-    <h1 className='text-3xl font-bold text-primary'>NOURVERSE</h1>
-    <section className='glass rounded-2xl p-4 space-y-3'>
-      <button onClick={load} className='px-4 py-2 bg-primary text-black rounded-xl'>{loading?'...':'تحميل آيات وتجهيز التلاوة'}</button>
-      <div className='text-muted'>{project.translation}</div>
-      <div className='text-2xl leading-loose'>{project.ayahs.map(a=>a.text).join(' ۝ ')}</div>
-      <div ref={waveRef} className='w-full h-20'/>
+import { Download, Upload, Play, Save, FolderOpen, ListVideo } from 'lucide-react';
+import { fetchAyahs, fetchTranslation, RECITERS } from '@/lib/quran-api';
+import { listDriveFiles, uploadToDriveResumable } from '@/lib/google-drive';
+import { renderMp4 } from '@/lib/render';
+import { useEditorStore } from '@/store/use-editor-store';
+
+export function EditorShell() {
+  const { project, drafts, patchProject, autoSave, loadSaved, loadDrafts, setProject } = useEditorStore();
+  const [rendering, setRendering] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [files, setFiles] = useState<any[]>([]);
+  const waveRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => { loadSaved(); loadDrafts(); }, [loadSaved, loadDrafts]);
+  useEffect(() => { autoSave(); }, [project, autoSave]);
+
+  useEffect(() => {
+    if (!project.ayahs[0]?.audio || !waveRef.current) return;
+    const ws = WaveSurfer.create({ container: waveRef.current, waveColor: '#22D3EE', progressColor: '#14B8A6', url: project.ayahs[0].audio, height: 70 });
+    return () => ws.destroy();
+  }, [project.ayahs]);
+
+  const subtitleClass = useMemo(() => project.subtitlePreset === 'glow' ? 'text-white drop-shadow-[0_0_12px_#22D3EE]' : project.subtitlePreset === 'karaoke' ? 'text-primary animate-pulse' : 'text-white', [project.subtitlePreset]);
+
+  const loadQuran = async () => {
+    try {
+      const ayahs = await fetchAyahs(project.surah, project.ayahFrom, project.ayahTo, project.reciter);
+      const translation = await fetchTranslation(project.surah, project.ayahFrom, project.ayahTo);
+      patchProject({ ayahs, translation, trimEnd: Math.max(20, ayahs.length * 5) });
+      toast.success('تم جلب التلاوة والآيات بنجاح');
+    } catch { toast.error('تعذر جلب بيانات القرآن'); }
+  };
+
+  const onRender = async () => {
+    try {
+      setRendering(true);
+      const blob = await renderMp4(project, setProgress);
+      const url = URL.createObjectURL(blob);
+      patchProject({ lastRenderedUrl: url });
+      toast.success('اكتمل تصدير الفيديو');
+    } catch { toast.error('فشل التصدير'); }
+    finally { setRendering(false); }
+  };
+
+  const onDriveUpload = async () => {
+    if (!project.lastRenderedUrl) return toast.error('قم بالتصدير أولاً');
+    const blob = await (await fetch(project.lastRenderedUrl)).blob();
+    const result = await uploadToDriveResumable(blob, `nourverse-${Date.now()}.mp4`);
+    toast.success(`تم الرفع: ${result.id}`);
+  };
+
+  return <main className='p-4 md:p-8 space-y-4 max-w-7xl mx-auto'>
+    <div className='flex items-center justify-between'><h1 className='text-3xl font-bold text-primary'>NOURVERSE</h1><span className='text-muted text-sm'>جاهز بدون تسجيل دخول</span></div>
+
+    <section className='glass rounded-2xl p-4 grid md:grid-cols-4 gap-3'>
+      <input type='number' value={project.surah} onChange={(e) => patchProject({ surah: Number(e.target.value) })} className='bg-slate-900 rounded p-2' placeholder='السورة' />
+      <input type='number' value={project.ayahFrom} onChange={(e) => patchProject({ ayahFrom: Number(e.target.value) })} className='bg-slate-900 rounded p-2' placeholder='من آية' />
+      <input type='number' value={project.ayahTo} onChange={(e) => patchProject({ ayahTo: Number(e.target.value) })} className='bg-slate-900 rounded p-2' placeholder='إلى آية' />
+      <select value={project.reciter} onChange={(e) => patchProject({ reciter: e.target.value })} className='bg-slate-900 rounded p-2'>{RECITERS.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}</select>
+      <button onClick={loadQuran} className='px-4 py-2 bg-primary text-black rounded-xl md:col-span-4'>تحميل المحتوى</button>
     </section>
-    <section className='glass rounded-2xl p-4 flex flex-wrap gap-2'>
-      <button onClick={exportVideo} className='px-4 py-2 rounded-xl bg-secondary text-black flex gap-2 items-center'><Play size={16}/> تصدير MP4</button>
-      <a href={videoUrl} download='nourverse.mp4' className='px-4 py-2 rounded-xl bg-white/10 flex gap-2 items-center'><Download size={16}/> تنزيل</a>
-      <button onClick={drive} className='px-4 py-2 rounded-xl bg-white/10 flex gap-2 items-center'><Upload size={16}/> رفع إلى Drive</button>
+
+    <section className='glass rounded-2xl p-4 space-y-2'>
+      <div className={subtitleClass + ' text-2xl leading-loose'}>{project.ayahs.map(a => a.text).join(' ۝ ') || 'النص العربي سيظهر هنا'}</div>
+      <p className='text-muted'>{project.translation || 'الترجمة الإنجليزية ستظهر هنا'}</p>
+      <div ref={waveRef} className='w-full' />
     </section>
-    {videoUrl && <video src={videoUrl} controls className='w-full max-w-sm rounded-xl'/>}
+
+    <section className='glass rounded-2xl p-4'>
+      <h2 className='mb-3 text-lg'>الخط الزمني</h2>
+      <input type='range' min={0} max={120} value={project.trimStart} onChange={(e) => patchProject({ trimStart: Number(e.target.value) })} className='w-full' />
+      <input type='range' min={1} max={180} value={project.trimEnd} onChange={(e) => patchProject({ trimEnd: Number(e.target.value) })} className='w-full' />
+      <div className='text-sm text-muted'>البداية: {project.trimStart}s | النهاية: {project.trimEnd}s</div>
+    </section>
+
+    <section className='glass rounded-2xl p-4 grid md:grid-cols-4 gap-3'>
+      <select value={project.subtitlePreset} onChange={(e) => patchProject({ subtitlePreset: e.target.value as any })} className='bg-slate-900 rounded p-2'><option value='glow'>Glow</option><option value='classic'>Classic</option><option value='karaoke'>Karaoke</option></select>
+      <select value={project.bitrate} onChange={(e) => patchProject({ bitrate: e.target.value as any })} className='bg-slate-900 rounded p-2'><option value='4M'>4 Mbps</option><option value='8M'>8 Mbps</option><option value='12M'>12 Mbps</option></select>
+      <label className='flex items-center gap-2'><input type='checkbox' checked={project.lowMemoryMode} onChange={(e)=>patchProject({lowMemoryMode:e.target.checked})} /> Low memory mode</label>
+      <input type='file' accept='image/*,video/*' onChange={(e)=>{const f=e.target.files?.[0]; if(!f) return; patchProject({backgroundUrl:URL.createObjectURL(f),backgroundType:f.type.startsWith('video')?'video':'image'});}} className='bg-slate-900 rounded p-2' />
+    </section>
+
+    <section className='glass rounded-2xl p-4 flex flex-wrap gap-2 items-center'>
+      <button onClick={onRender} disabled={rendering} className='px-4 py-2 rounded-xl bg-secondary text-black flex gap-2 items-center'><Play size={16} /> {rendering ? `Rendering ${progress}%` : 'تصدير MP4'}</button>
+      <a href={project.lastRenderedUrl} download='nourverse.mp4' className='px-4 py-2 rounded-xl bg-white/10 flex gap-2 items-center'><Download size={16} /> تنزيل</a>
+      <button onClick={onDriveUpload} className='px-4 py-2 rounded-xl bg-white/10 flex gap-2 items-center'><Upload size={16} /> رفع Drive</button>
+      <button onClick={() => autoSave().then(()=>toast.success('تم حفظ المسودة'))} className='px-4 py-2 rounded-xl bg-white/10 flex gap-2 items-center'><Save size={16}/> حفظ</button>
+      <button onClick={async () => { const r = await listDriveFiles(); setFiles(r.files || []); }} className='px-4 py-2 rounded-xl bg-white/10 flex gap-2 items-center'><ListVideo size={16}/> ملفاتي في Drive</button>
+      <button onClick={() => drafts[0] && setProject(drafts[0])} className='px-4 py-2 rounded-xl bg-white/10 flex gap-2 items-center'><FolderOpen size={16}/> استعادة آخر مسودة</button>
+    </section>
+
+    <div className='grid md:grid-cols-2 gap-3'>
+      {files.map((f) => <motion.a initial={{ opacity: 0 }} animate={{ opacity: 1 }} key={f.id} href={f.webViewLink} target='_blank' className='glass p-3 rounded-xl block'>{f.name}</motion.a>)}
+      {project.lastRenderedUrl && <video src={project.lastRenderedUrl} controls className='w-full rounded-xl' />}
+    </div>
   </main>;
 }
