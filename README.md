@@ -1,41 +1,34 @@
-# NOURVERSE — Cinematic Arabic Quran Reel Generator
+# NOURVERSE
 
-No auth. No login. Opens directly to editor.
+NOURVERSE is a no-login Quran reel generator built with Next.js.
 
-## Required API Keys / Config
-You only need one key/config value:
+## Deploy to Vercel (Important)
 
-- `NEXT_PUBLIC_GOOGLE_CLIENT_ID` → Google OAuth Web Client ID for Drive upload popup.
+If you see this error in Vercel:
 
-Quran data uses public API:
-- `https://api.alquran.cloud`
+`Could not read package.json: ENOENT: no such file or directory, open '/vercel/path0/package.json'`
 
-## Local Development
+it means Vercel is building the wrong directory.
+
+### Fix
+
+1. Open **Vercel → Project Settings → General**.
+2. Set **Root Directory** to the repository root (`.`).
+3. In **Build & Development Settings** keep:
+   - Install Command: `npm install`
+   - Build Command: `npm run build`
+4. Redeploy.
+
+This repository includes `vercel.json` with Next.js framework and install/build commands.
+
+## Environment Variables
+
+- `NEXT_PUBLIC_GOOGLE_CLIENT_ID`
+- `NEXT_PUBLIC_PEXELS_API_KEY`
+
+## Local run
+
 ```bash
 npm install
-cp .env.example .env.local
 npm run dev
 ```
-
-## Production Deployment (Vercel)
-1. Push this repo to GitHub.
-2. Import project in Vercel.
-3. Add environment variable:
-   - `NEXT_PUBLIC_GOOGLE_CLIENT_ID`
-4. Deploy.
-
-## Features Implemented
-- Quran ayah + recitation loading (multiple reciters).
-- Arabic RTL subtitle display with style presets.
-- Waveform audio preview.
-- Timeline trim controls.
-- Local MP4 rendering with FFmpeg.wasm.
-- Download MP4.
-- Google Drive popup OAuth upload (resumable upload flow).
-- Drive file listing.
-- IndexedDB + localStorage autosave and draft restore.
-- Installable PWA shell.
-
-## Notes
-- Rendering runs in-browser and depends on device performance.
-- For best Android performance, enable low-memory mode and shorter clips.
