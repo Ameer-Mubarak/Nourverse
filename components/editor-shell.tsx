@@ -20,6 +20,7 @@ export function EditorShell() {
   const [pexelsQuery, setPexelsQuery] = useState('islamic night city');
   const [pexelsPhotos, setPexelsPhotos] = useState<any[]>([]);
   const [pexelsVideos, setPexelsVideos] = useState<any[]>([]);
+  const [pexelsMode, setPexelsMode] = useState<'video' | 'photo' | 'auto'>('auto');
   const [playhead, setPlayhead] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const waveRef = useRef<HTMLDivElement>(null);
@@ -109,6 +110,31 @@ export function EditorShell() {
   };
 
 
+  const applyAutoBackground = (photos: any[], videos: any[]) => {
+    if (pexelsMode === 'photo' && photos[0]) {
+      patchProject({ backgroundUrl: photos[0].src.portrait || photos[0].src.large2x, backgroundType: 'image' });
+      return 'photo';
+    }
+    if (pexelsMode === 'video' && videos[0]) {
+      const link = pickVerticalVideoLink(videos[0]);
+      if (link) {
+        patchProject({ backgroundUrl: link, backgroundType: 'video' });
+        return 'video';
+      }
+    }
+
+    const preferredVideo = videos[0] ? pickVerticalVideoLink(videos[0]) : null;
+    if (preferredVideo) {
+      patchProject({ backgroundUrl: preferredVideo, backgroundType: 'video' });
+      return 'video';
+    }
+    if (photos[0]) {
+      patchProject({ backgroundUrl: photos[0].src.portrait || photos[0].src.large2x, backgroundType: 'image' });
+      return 'photo';
+    }
+    return null;
+  };
+
   const loadPexels = async () => {
     try {
       const [photos, videos] = await Promise.all([
@@ -117,7 +143,8 @@ export function EditorShell() {
       ]);
       setPexelsPhotos(photos);
       setPexelsVideos(videos);
-      toast.success('تم تحميل خلفيات Pexels');
+      const chosen = applyAutoBackground(photos, videos);
+      toast.success(chosen ? `تم اختيار ${chosen === 'video' ? 'فيديو' : 'صورة'} تلقائياً` : 'تم تحميل خلفيات Pexels');
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'تعذر تحميل Pexels');
     }
@@ -245,6 +272,12 @@ export function EditorShell() {
         <input value={pexelsQuery} onChange={(e)=>setPexelsQuery(e.target.value)} className='flex-1 bg-slate-900 rounded p-2' placeholder='ابحث عن خلفية مثل: mosque drone night' />
         <button onClick={loadPexels} className='px-4 py-2 bg-primary text-black rounded-xl'>تحميل</button>
       </div>
+      <div className='flex flex-wrap gap-2'>
+        <button onClick={() => setPexelsMode('auto')} className={`px-3 py-1 rounded ${pexelsMode === 'auto' ? 'bg-primary text-black' : 'bg-white/10'}`}>Auto</button>
+        <button onClick={() => setPexelsMode('video')} className={`px-3 py-1 rounded ${pexelsMode === 'video' ? 'bg-primary text-black' : 'bg-white/10'}`}>Videos</button>
+        <button onClick={() => setPexelsMode('photo')} className={`px-3 py-1 rounded ${pexelsMode === 'photo' ? 'bg-primary text-black' : 'bg-white/10'}`}>Photos</button>
+      </div>
+
       <div className='grid md:grid-cols-4 gap-3'>
         {pexelsPhotos.map((photo) => (
           <button key={`p-${photo.id}`} onClick={() => patchProject({ backgroundUrl: photo.src.portrait || photo.src.large2x, backgroundType: 'image' })} className='text-left'>
