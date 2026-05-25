@@ -4,14 +4,14 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import WaveSurfer from 'wavesurfer.js';
 import { motion } from 'framer-motion';
 import { toast } from 'sonner';
-import { Download, Upload, Play, Save, FolderOpen, ListVideo } from 'lucide-react';
+import { Download, Upload, Play, Save, FolderOpen, ListVideo, FileJson, GripVertical } from 'lucide-react';
 import { fetchAyahs, fetchTranslation, RECITERS } from '@/lib/quran-api';
 import { listDriveFiles, uploadToDriveResumable } from '@/lib/google-drive';
 import { renderMp4 } from '@/lib/render';
 import { useEditorStore } from '@/store/use-editor-store';
 
 export function EditorShell() {
-  const { project, drafts, patchProject, autoSave, loadSaved, loadDrafts, setProject } = useEditorStore();
+  const { project, drafts, patchProject, autoSave, loadSaved, loadDrafts, setProject, exportProject, importProject } = useEditorStore();
   const [rendering, setRendering] = useState(false);
   const [progress, setProgress] = useState(0);
   const [files, setFiles] = useState<any[]>([]);
@@ -27,6 +27,10 @@ export function EditorShell() {
   }, [project.ayahs]);
 
   const subtitleClass = useMemo(() => project.subtitlePreset === 'glow' ? 'text-white drop-shadow-[0_0_12px_#22D3EE]' : project.subtitlePreset === 'karaoke' ? 'text-primary animate-pulse' : 'text-white', [project.subtitlePreset]);
+
+  const timeline = project.timeline.length ? project.timeline : project.ayahs.map((a, idx) => ({ id: `${a.number}-${idx}`, ayahNumber: a.numberInSurah, start: idx * 5, end: (idx + 1) * 5, layer: 0 }));
+  useEffect(() => { if (!project.timeline.length && project.ayahs.length) patchProject({ timeline }); }, [project.ayahs.length]);
+
 
   const loadQuran = async () => {
     try {
@@ -77,6 +81,15 @@ export function EditorShell() {
       <input type='range' min={0} max={120} value={project.trimStart} onChange={(e) => patchProject({ trimStart: Number(e.target.value) })} className='w-full' />
       <input type='range' min={1} max={180} value={project.trimEnd} onChange={(e) => patchProject({ trimEnd: Number(e.target.value) })} className='w-full' />
       <div className='text-sm text-muted'>البداية: {project.trimStart}s | النهاية: {project.trimEnd}s</div>
+      <div className='space-y-2 mt-3'>
+        {timeline.map((clip, i) => <div key={clip.id} className='bg-slate-900 rounded p-2 flex items-center justify-between'>
+          <div className='flex items-center gap-2 text-sm'><GripVertical size={14}/> آية {clip.ayahNumber} ({clip.start}s → {clip.end}s)</div>
+          <div className='flex gap-2'>
+            <button onClick={() => { if(i===0) return; const t=[...timeline]; [t[i-1],t[i]]=[t[i],t[i-1]]; patchProject({timeline:t}); }} className='text-xs px-2 py-1 bg-white/10 rounded'>↑</button>
+            <button onClick={() => { if(i===timeline.length-1) return; const t=[...timeline]; [t[i+1],t[i]]=[t[i],t[i+1]]; patchProject({timeline:t}); }} className='text-xs px-2 py-1 bg-white/10 rounded'>↓</button>
+          </div>
+        </div>)}
+      </div>
     </section>
 
     <section className='glass rounded-2xl p-4 grid md:grid-cols-4 gap-3'>
@@ -93,6 +106,8 @@ export function EditorShell() {
       <button onClick={() => autoSave().then(()=>toast.success('تم حفظ المسودة'))} className='px-4 py-2 rounded-xl bg-white/10 flex gap-2 items-center'><Save size={16}/> حفظ</button>
       <button onClick={async () => { const r = await listDriveFiles(); setFiles(r.files || []); }} className='px-4 py-2 rounded-xl bg-white/10 flex gap-2 items-center'><ListVideo size={16}/> ملفاتي في Drive</button>
       <button onClick={() => drafts[0] && setProject(drafts[0])} className='px-4 py-2 rounded-xl bg-white/10 flex gap-2 items-center'><FolderOpen size={16}/> استعادة آخر مسودة</button>
+      <button onClick={() => { const data = exportProject(); const blob = new Blob([data], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href=url; a.download='nourverse-project.json'; a.click(); }} className='px-4 py-2 rounded-xl bg-white/10 flex gap-2 items-center'><FileJson size={16}/> تصدير JSON</button>
+      <label className='px-4 py-2 rounded-xl bg-white/10 flex gap-2 items-center cursor-pointer'><FileJson size={16}/> استيراد JSON<input type='file' accept='application/json' className='hidden' onChange={async (e)=>{const f=e.target.files?.[0]; if(!f) return; const ok=importProject(await f.text()); ok?toast.success('تم استيراد المشروع'):toast.error('ملف غير صالح');}} /></label>
     </section>
 
     <div className='grid md:grid-cols-2 gap-3'>

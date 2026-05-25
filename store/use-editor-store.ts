@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { Project } from '@/lib/types';
+import { projectSchema } from '@/lib/schemas';
 import { getProject, listProjects, saveProject } from '@/lib/db';
 
 const initialProject: Project = {
@@ -33,6 +34,8 @@ type S = {
   autoSave: () => Promise<void>;
   loadSaved: () => Promise<void>;
   loadDrafts: () => Promise<void>;
+  exportProject: () => string;
+  importProject: (raw: string) => boolean;
 };
 
 export const useEditorStore = create<S>((set, get) => ({
@@ -57,5 +60,15 @@ export const useEditorStore = create<S>((set, get) => ({
   loadDrafts: async () => {
     const drafts = await listProjects();
     set({ drafts: drafts.sort((a, b) => b.updatedAt - a.updatedAt) });
+  },
+  exportProject: () => JSON.stringify(get().project, null, 2),
+  importProject: (raw) => {
+    try {
+      const parsed = projectSchema.parse(JSON.parse(raw));
+      set({ project: parsed });
+      return true;
+    } catch {
+      return false;
+    }
   },
 }));
