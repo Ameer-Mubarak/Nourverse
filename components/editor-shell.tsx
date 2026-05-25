@@ -9,6 +9,7 @@ import { fetchAyahs, fetchTranslation, RECITERS } from '@/lib/quran-api';
 import { listDriveFiles, uploadToDriveResumable } from '@/lib/google-drive';
 import { renderMp4 } from '@/lib/render';
 import { useEditorStore } from '@/store/use-editor-store';
+import { pickVerticalVideoLink, searchPexelsPhotos, searchPexelsVideos } from '@/lib/pexels';
 
 export function EditorShell() {
   const { project, drafts, patchProject, autoSave, loadSaved, loadDrafts, setProject, exportProject, importProject } = useEditorStore();
@@ -16,6 +17,9 @@ export function EditorShell() {
   const [progress, setProgress] = useState(0);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [files, setFiles] = useState<any[]>([]);
+  const [pexelsQuery, setPexelsQuery] = useState('islamic night city');
+  const [pexelsPhotos, setPexelsPhotos] = useState<any[]>([]);
+  const [pexelsVideos, setPexelsVideos] = useState<any[]>([]);
   const [playhead, setPlayhead] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const waveRef = useRef<HTMLDivElement>(null);
@@ -102,6 +106,21 @@ export function EditorShell() {
     const updated = timeline.map((clip) => clip.id === id ? { ...clip, [field]: value } : clip)
       .map((clip) => clip.end <= clip.start ? { ...clip, end: clip.start + 0.5 } : clip);
     patchProject({ timeline: updated });
+  };
+
+
+  const loadPexels = async () => {
+    try {
+      const [photos, videos] = await Promise.all([
+        searchPexelsPhotos(pexelsQuery),
+        searchPexelsVideos(pexelsQuery),
+      ]);
+      setPexelsPhotos(photos);
+      setPexelsVideos(videos);
+      toast.success('تم تحميل خلفيات Pexels');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'تعذر تحميل Pexels');
+    }
   };
 
   const onRender = async () => {
@@ -217,6 +236,33 @@ export function EditorShell() {
       <input type='range' min={0} max={1} step={0.05} value={project.overlayOpacity} onChange={(e)=>patchProject({overlayOpacity:Number(e.target.value)})} className='w-full md:col-span-2'/>
       <input type='range' min={0} max={24} step={1} value={project.blur} onChange={(e)=>patchProject({blur:Number(e.target.value)})} className='w-full md:col-span-1'/>
       <input type='range' min={1} max={2} step={0.05} value={project.zoom} onChange={(e)=>patchProject({zoom:Number(e.target.value)})} className='w-full md:col-span-1'/>
+    </section>
+
+
+    <section className='glass rounded-2xl p-4 space-y-3'>
+      <h2 className='text-lg'>Pexels الخلفيات (صور + فيديو Drone)</h2>
+      <div className='flex gap-2'>
+        <input value={pexelsQuery} onChange={(e)=>setPexelsQuery(e.target.value)} className='flex-1 bg-slate-900 rounded p-2' placeholder='ابحث عن خلفية مثل: mosque drone night' />
+        <button onClick={loadPexels} className='px-4 py-2 bg-primary text-black rounded-xl'>تحميل</button>
+      </div>
+      <div className='grid md:grid-cols-4 gap-3'>
+        {pexelsPhotos.map((photo) => (
+          <button key={`p-${photo.id}`} onClick={() => patchProject({ backgroundUrl: photo.src.portrait || photo.src.large2x, backgroundType: 'image' })} className='text-left'>
+            <img src={photo.src.portrait || photo.src.large2x} alt='pexels' className='w-full h-40 object-cover rounded-lg' />
+            <div className='text-xs text-muted mt-1'>Photo: {photo.photographer}</div>
+          </button>
+        ))}
+        {pexelsVideos.map((video) => {
+          const link = pickVerticalVideoLink(video);
+          if (!link) return null;
+          return (
+            <button key={`v-${video.id}`} onClick={() => patchProject({ backgroundUrl: link, backgroundType: 'video' })} className='text-left'>
+              <img src={video.image} alt='pexels video' className='w-full h-40 object-cover rounded-lg' />
+              <div className='text-xs text-muted mt-1'>Video: {video.user?.name || 'Pexels'}</div>
+            </button>
+          );
+        })}
+      </div>
     </section>
 
     <section className='glass rounded-2xl p-4 flex flex-wrap gap-2 items-center'>
