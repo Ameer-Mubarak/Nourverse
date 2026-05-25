@@ -8,6 +8,30 @@ export const ayahSchema = z.object({
   surah: z.object({ name: z.string(), englishName: z.string() }),
 });
 
+export const translationAyahSchema = z.object({
+  text: z.string(),
+});
+
+export const alquranResponseSchema = <T extends z.ZodTypeAny>(itemSchema: T) =>
+  z.object({
+    code: z.number(),
+    status: z.string(),
+    data: z.object({
+      ayahs: z.array(itemSchema),
+    }),
+  });
+
+export const driveFileSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  webViewLink: z.string().optional(),
+  webContentLink: z.string().optional(),
+});
+
+export const driveListResponseSchema = z.object({
+  files: z.array(driveFileSchema),
+});
+
 export const projectSchema = z.object({
   id: z.string(),
   title: z.string(),
@@ -31,6 +55,9 @@ export const projectSchema = z.object({
   lowMemoryMode: z.boolean(),
   lastRenderedUrl: z.string().optional(),
   updatedAt: z.number(),
+}).refine((value) => value.ayahFrom <= value.ayahTo, {
+  message: 'ayahFrom must be less than or equal to ayahTo',
+  path: ['ayahFrom'],
 });
 
 export type ProjectInput = z.infer<typeof projectSchema>;

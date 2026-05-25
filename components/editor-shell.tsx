@@ -14,6 +14,7 @@ export function EditorShell() {
   const { project, drafts, patchProject, autoSave, loadSaved, loadDrafts, setProject, exportProject, importProject } = useEditorStore();
   const [rendering, setRendering] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const [files, setFiles] = useState<any[]>([]);
   const waveRef = useRef<HTMLDivElement>(null);
 
@@ -34,28 +35,55 @@ export function EditorShell() {
 
   const loadQuran = async () => {
     try {
+      if (project.ayahFrom > project.ayahTo) {
+        toast.error('نطاق الآيات غير صحيح');
+        return;
+      }
       const ayahs = await fetchAyahs(project.surah, project.ayahFrom, project.ayahTo, project.reciter);
       const translation = await fetchTranslation(project.surah, project.ayahFrom, project.ayahTo);
       patchProject({ ayahs, translation, trimEnd: Math.max(20, ayahs.length * 5) });
       toast.success('تم جلب التلاوة والآيات بنجاح');
-    } catch { toast.error('تعذر جلب بيانات القرآن'); }
+    } catch (e) { toast.error(e instanceof Error ? e.message : 'تعذر جلب بيانات القرآن'); }
   };
 
   const onRender = async () => {
     try {
       setRendering(true);
-      const blob = await renderMp4(project, setProgress);
+      setProgress(0);
+      let blob: Blob;
+      if (project.lowMemoryMode && typeof Worker !== 'undefined') {
+        blob = await new Promise<Blob>((resolve, reject) => {
+          const worker = new Worker(new URL('../workers/render-worker.ts', import.meta.url));
+          worker.onmessage = (event: MessageEvent) => {
+            const data = event.data;
+            if (data.type === 'progress') setProgress(data.progress);
+            if (data.type === 'done') {
+              worker.terminate();
+              resolve(data.blob as Blob);
+            }
+            if (data.type === 'error') {
+              worker.terminate();
+              reject(new Error(data.message));
+            }
+          };
+          worker.postMessage({ project });
+        });
+      } else {
+        blob = await renderMp4(project, setProgress);
+      }
+
       const url = URL.createObjectURL(blob);
       patchProject({ lastRenderedUrl: url });
       toast.success('اكتمل تصدير الفيديو');
-    } catch { toast.error('فشل التصدير'); }
+    } catch (e) { toast.error(e instanceof Error ? e.message : 'فشل التصدير'); }
     finally { setRendering(false); }
   };
 
   const onDriveUpload = async () => {
     if (!project.lastRenderedUrl) return toast.error('قم بالتصدير أولاً');
+    setUploadProgress(0);
     const blob = await (await fetch(project.lastRenderedUrl)).blob();
-    const result = await uploadToDriveResumable(blob, `nourverse-${Date.now()}.mp4`);
+    const result = await uploadToDriveResumable(blob, `nourverse-${Date.now()}.mp4`, setUploadProgress);
     toast.success(`تم الرفع: ${result.id}`);
   };
 
@@ -97,12 +125,15 @@ export function EditorShell() {
       <select value={project.bitrate} onChange={(e) => patchProject({ bitrate: e.target.value as any })} className='bg-slate-900 rounded p-2'><option value='4M'>4 Mbps</option><option value='8M'>8 Mbps</option><option value='12M'>12 Mbps</option></select>
       <label className='flex items-center gap-2'><input type='checkbox' checked={project.lowMemoryMode} onChange={(e)=>patchProject({lowMemoryMode:e.target.checked})} /> Low memory mode</label>
       <input type='file' accept='image/*,video/*' onChange={(e)=>{const f=e.target.files?.[0]; if(!f) return; patchProject({backgroundUrl:URL.createObjectURL(f),backgroundType:f.type.startsWith('video')?'video':'image'});}} className='bg-slate-900 rounded p-2' />
+      <input type='range' min={0} max={1} step={0.05} value={project.overlayOpacity} onChange={(e)=>patchProject({overlayOpacity:Number(e.target.value)})} className='w-full md:col-span-2'/>
+      <input type='range' min={0} max={24} step={1} value={project.blur} onChange={(e)=>patchProject({blur:Number(e.target.value)})} className='w-full md:col-span-1'/>
+      <input type='range' min={1} max={2} step={0.05} value={project.zoom} onChange={(e)=>patchProject({zoom:Number(e.target.value)})} className='w-full md:col-span-1'/>
     </section>
 
     <section className='glass rounded-2xl p-4 flex flex-wrap gap-2 items-center'>
       <button onClick={onRender} disabled={rendering} className='px-4 py-2 rounded-xl bg-secondary text-black flex gap-2 items-center'><Play size={16} /> {rendering ? `Rendering ${progress}%` : 'تصدير MP4'}</button>
       <a href={project.lastRenderedUrl} download='nourverse.mp4' className='px-4 py-2 rounded-xl bg-white/10 flex gap-2 items-center'><Download size={16} /> تنزيل</a>
-      <button onClick={onDriveUpload} className='px-4 py-2 rounded-xl bg-white/10 flex gap-2 items-center'><Upload size={16} /> رفع Drive</button>
+      <button onClick={onDriveUpload} className='px-4 py-2 rounded-xl bg-white/10 flex gap-2 items-center'><Upload size={16} /> رفع Drive ({uploadProgress}%)</button>
       <button onClick={() => autoSave().then(()=>toast.success('تم حفظ المسودة'))} className='px-4 py-2 rounded-xl bg-white/10 flex gap-2 items-center'><Save size={16}/> حفظ</button>
       <button onClick={async () => { const r = await listDriveFiles(); setFiles(r.files || []); }} className='px-4 py-2 rounded-xl bg-white/10 flex gap-2 items-center'><ListVideo size={16}/> ملفاتي في Drive</button>
       <button onClick={() => drafts[0] && setProject(drafts[0])} className='px-4 py-2 rounded-xl bg-white/10 flex gap-2 items-center'><FolderOpen size={16}/> استعادة آخر مسودة</button>
