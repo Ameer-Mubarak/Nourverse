@@ -23,7 +23,13 @@ export async function fetchAyahs(surah: number, from: number, to: number, recite
   const parsed = alquranResponseSchema(z.any()).parse(raw);
   const normalized = parsed.data.ayahs
     .slice(from - 1, to)
-    .map((a: any) => ({ number: a.number, text: a.text, audio: a.audio, surah: a.surah, numberInSurah: a.numberInSurah }));
+    .map((a: any) => ({
+      number: a.number,
+      text: a.text,
+      audio: a.audio,
+      surah: a.surah ?? { name: `سورة ${surah}`, englishName: `Surah ${surah}` },
+      numberInSurah: a.numberInSurah,
+    }));
   return z.array(ayahSchema).parse(normalized);
 }
 
